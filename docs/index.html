@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>train-tui — Live Demo</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --dim: #6e7681;
+    --green: #3fb950;
+    --yellow: #d29922;
+    --blue: #58a6ff;
+    --red: #f85149;
+    --orange: #db6d28;
+    --amber: #e3b341;
+    --cyan: #39c5cf;
+    --magenta: #d2a8ff;
+    --slate: #8b949e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 2rem 1rem;
+  }
+
+  .page-header {
+    text-align: center;
+    margin-bottom: 2rem;
+    max-width: 800px;
+  }
+  .page-header h1 {
+    font-size: 1.8rem;
+    margin-bottom: 0.5rem;
+  }
+  .page-header h1 .logo { color: var(--cyan); }
+  .page-header p {
+    color: var(--dim);
+    font-size: 0.95rem;
+    line-height: 1.5;
+  }
+  .page-header a {
+    color: var(--blue);
+    text-decoration: none;
+  }
+  .page-header a:hover { text-decoration: underline; }
+
+  /* Terminal container */
+  .terminal {
+    background: #010409;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    width: 100%;
+    max-width: 760px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  /* Title bar */
+  .term-titlebar {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 0.5rem 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .term-titlebar .dots { display: flex; gap: 6px; }
+  .term-titlebar .dots span {
+    width: 12px; height: 12px; border-radius: 50%;
+  }
+  .term-titlebar .dots .r { background: #ff5f56; }
+  .term-titlebar .dots .y { background: #ffbd2e; }
+  .term-titlebar .dots .g { background: #27c93f; }
+  .term-titlebar .title {
+    color: var(--dim);
+    font-size: 12px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  /* Terminal body */
+  .term-body {
+    padding: 0.6rem 0.5rem;
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .line { min-height: 1.55em; }
+
+  .hr {
+    color: var(--border);
+    letter-spacing: -1px;
+  }
+
+  .dim { color: var(--dim); }
+  .wht { color: var(--text); }
+  .bold { font-weight: 700; }
+  .bwht { color: #f0f6fc; font-weight: 700; }
+  .cyan { color: var(--cyan); }
+  .green { color: var(--green); }
+  .yellow { color: var(--yellow); }
+  .blue { color: var(--blue); }
+  .red { color: var(--red); }
+  .orange { color: var(--orange); }
+  .amber { color: var(--amber); }
+  .magenta { color: var(--magenta); }
+  .slate { color: var(--slate); }
+  .steel { color: #79b8ff; }
+  .ltgray { color: #b1bac4; }
+  .dkgray { color: #484f58; }
+
+  .bar-track { color: #30363d; }
+  .bar-fill-green { color: var(--green); }
+  .bar-fill-yellow { color: var(--yellow); }
+  .bar-fill-orange { color: var(--orange); }
+  .bar-fill-blue { color: var(--blue); }
+
+  .blink {
+    animation: blink 1.2s ease-in-out infinite;
+  }
+  @keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .controls {
+    margin-top: 1.5rem;
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .controls button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.15s;
+  }
+  .controls button:hover {
+    border-color: var(--blue);
+    color: var(--blue);
+  }
+  .controls button.active {
+    border-color: var(--green);
+    color: var(--green);
+  }
+
+  .footer {
+    margin-top: 2rem;
+    text-align: center;
+    color: var(--dim);
+    font-size: 0.8rem;
+    max-width: 600px;
+  }
+  .footer a { color: var(--blue); text-decoration: none; }
+  .footer a:hover { text-decoration: underline; }
+
+  /* Block characters */
+  .blk-full { color: inherit; }
+  .blk-partial { color: inherit; }
+  .blk-empty { color: #30363d; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1><span class="logo">██</span> train-tui</h1>
+  <p>A lightweight, dependency-free terminal UI for monitoring AI training runs.<br>
+  Pure C, no ncurses, no Python. <a href="https://github.com/HerRei/train-tui">View on GitHub →</a></p>
+</div>
+
+<div class="terminal">
+  <div class="term-titlebar">
+    <div class="dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
+    <div class="title">train-tui — bash</div>
+  </div>
+  <div class="term-body" id="term"></div>
+</div>
+
+<div class="controls">
+  <button onclick="setState('training')">● Training</button>
+  <button onclick="setState('validating')">● Validating</button>
+  <button onclick="setState('saving')">● Saving</button>
+  <button onclick="setState('crashed')">● Crashed</button>
+</div>
+
+<div class="footer">
+  This is a live simulation of the TUI rendering loop. The real tool reads
+  log files, sysfs/nvidia-smi GPU stats, and checkpoint directories.
+  <br><br>
+  <a href="https://github.com/HerRei/train-tui">Source code</a> ·
+  <a href="https://huggingface.co/HerRei/train-tui">Hugging Face</a>
+</div>
+
+<script>
+// --- Simulation state ---
+let state = 'training';
+let curIter = 50800;
+const totalIter = 250000;
+let epoch = 1;
+let lr = 1.0e-4;
+let tIter = 1.91;
+let tData = 0.002;
+let eta = '4 days, 19:24:47';
+let gpuBusy = 100;
+let memBusy = 41;
+let vramUsed = 7.3; // GiB
+let vramTotal = 15.9;
+let gpuTemp = 62;
+let powerW = 161;
+let fanRpm = 720;
+
+const losses = {
+  l_g_pix: 0.040098,
+  l_g_percep: 8.9469,
+  l_g_gan: 0.150020,
+  l_d_real: 0.620560,
+  l_d_fake: 0.472420,
+  out_d_r: 1.9775,
+  out_d_f: -1.0274
+};
+
+const valData = {
+  psnr: 31.0703,
+  bestPsnr: 31.0892,
+  bestPsnrIter: 40000,
+  ssim: 0.851900,
+  bestSsim: 0.8520,
+  bestSsimIter: 30000
+};
+
+// --- Rendering helpers ---
+function fmtMetric(v) {
+  if (v === 0) return '0';
+  const av = Math.abs(v);
+  if (av >= 100) return v.toFixed(2);
+  if (av >= 1) return v.toFixed(4);
+  if (av >= 0.001) return v.toFixed(6);
+  return v.toExponential(2);
+}
+
+function makeBar(pct, width) {
+  const cells = pct * width;
+  const full = Math.floor(cells);
+  const frac = cells - full;
+
+  let fillCol, leadCol;
+  if (pct >= 0.85) { fillCol = 'bar-fill-green'; leadCol = 'cyan'; }
+  else if (pct >= 0.5) { fillCol = 'bar-fill-green'; leadCol = 'green'; }
+  else if (pct >= 0.2) { fillCol = 'bar-fill-yellow'; leadCol = 'yellow'; }
+  else { fillCol = 'bar-fill-orange'; leadCol = 'yellow'; }
+
+  let html = `<span class="${fillCol}">`;
+  for (let i = 0; i < full; i++) html += '█';
+  html += '</span>';
+
+  if (full < width && frac > 0) {
+    const partials = ['▏','▎','▍','▌','▋','▊','▉'];
+    const idx = Math.min(6, Math.max(0, Math.round(frac * 8) - 1));
+    html += `<span class="${leadCol}">${partials[idx]}</span>`;
+  }
+
+  html += '<span class="blk-empty">';
+  for (let i = full + (frac > 0 ? 1 : 0); i < width; i++) html += '░';
+  html += '</span>';
+
+  return html;
+}
+
+function makeMinBar(pct, width) {
+  const cells = Math.floor(pct * width);
+  let col = 'green';
+  if (pct >= 0.9) col = 'red';
+  else if (pct >= 0.75) col = 'yellow';
+
+  let html = `<span class="${col}">`;
+  for (let i = 0; i < cells; i++) html += '▓';
+  html += '</span><span class="blk-empty">';
+  for (let i = cells; i < width; i++) html += '░';
+  html += '</span>';
+  return html;
+}
+
+function hr(width) {
+  return `<span class="hr">${'─'.repeat(width)}</span>`;
+}
+
+function render() {
+  const w = 78;
+  const barW = 48;
+  const mbW = 40;
+  const pct = curIter / totalIter;
+
+  const stateMap = {
+    training:   { glyph: '●', col: 'green',  label: 'TRAINING',   tagCol: 'green' },
+    validating: { glyph: '●', col: 'yellow', label: 'VALIDATING', tagCol: 'yellow' },
+    saving:     { glyph: '●', col: 'blue',   label: 'SAVING',     tagCol: 'blue' },
+    crashed:    { glyph: '✖', col: 'red',    label: 'CRASHED',    tagCol: 'red' },
+  };
+  const st = stateMap[state];
+  const glyphClass = state === 'crashed' ? 'red' : st.col;
+
+  let h = '';
+  h += `<div class="line"> <span class="cyan bold">██</span> <span class="bold bwht">train-tui</span> <span class="slate"> HAT-S_SRx4_face_finetune_v2</span> <span class="dkgray"> pid 9397  profile: basicsr</span></div>`;
+
+  h += `<div class="line">  <span class="ltgray">iter</span> <span class="bold bwht">${String(curIter).padStart(5)}</span><span class="dkgray">/</span><span class="wht">${String(totalIter).padStart(-5)}</span>  ${makeBar(pct, barW)}  <span class="bold bwht">${(pct*100).toFixed(1)}%</span></div>`;
+
+  h += `<div class="line">  <span class="ltgray">epoch</span> <span class="wht">${String(epoch).padStart(3)}</span>   <span class="ltgray">lr</span> <span class="steel">${lr.toExponential(3)}</span>   <span class="ltgray">t/it</span> <span class="wht">${tIter.toFixed(2)}s</span> <span class="dkgray">(data ${tData.toFixed(3)}s)</span></div>`;
+
+  h += `<div class="line">  <span class="ltgray">eta</span> <span class="bold amber">${eta}</span></div>`;
+
+  h += `<div class="line">${hr(w)}</div>`;
+
+  // GPU status
+  h += `<div class="line">  <span class="${glyphClass}">${st.glyph}</span>  <span class="dkgray">[</span><span class="${st.tagCol}">${st.label}</span><span class="dkgray">]</span>  `;
+  if (state === 'crashed') {
+    h += `<span class="dkgray">(process died)</span></div>`;
+  } else {
+    h += `<span class="ltgray">GPU</span> <span class="wht">${String(gpuBusy).padStart(3)}%</span>   <span class="ltgray">MEM</span> <span class="wht">${String(memBusy).padStart(3)}%</span>   <span class="ltgray">VRAM</span> <span class="wht">${vramUsed.toFixed(1)}G</span><span class="dkgray">/</span><span class="slate">${vramTotal.toFixed(1)}G</span>   <span class="ltgray">${gpuTemp}</span><span class="dkgray">C</span>   <span class="ltgray">${powerW}</span><span class="dkgray">W</span>   <span class="ltgray">${fanRpm}</span><span class="dkgray">rpm</span></div>`;
+  }
+
+  if (state !== 'crashed') {
+    h += `<div class="line">  <span class="dkgray">gpu </span>${makeMinBar(gpuBusy/100, mbW)}  <span class="wht">${String(gpuBusy).padStart(3)}%</span></div>`;
+    h += `<div class="line">  <span class="dkgray">mem </span>${makeMinBar(memBusy/100, mbW)}  <span class="wht">${String(memBusy).padStart(3)}%</span></div>`;
+    h += `<div class="line">  <span class="dkgray">vram</span>${makeMinBar(vramUsed/vramTotal, mbW)}  <span class="wht">${Math.round(vramUsed/vramTotal*100)}%</span></div>`;
+  }
+
+  h += `<div class="line">${hr(w)}</div>`;
+
+  // Metrics
+  const lossEntries = Object.entries(losses);
+  h += `<div class="line">  <span class="bold magenta">metrics</span>  `;
+  let count = 0;
+  for (const [label, val] of lossEntries) {
+    if (count > 0 && count % 3 === 0) {
+      h += `</div><div class="line">  <span class="dkgray">        </span>`;
+    }
+    h += `<span class="ltgray">${label}</span> <span class="wht">${fmtMetric(val)}</span>  `;
+    count++;
+  }
+  h += `</div>`;
+
+  h += `<div class="line">${hr(w)}</div>`;
+
+  // Validation
+  if (state === 'validating') {
+    h += `<div class="line">  <span class="bold cyan">validation</span>  <span class="bold yellow blink">RUNNING</span>  <span class="ltgray">psnr</span> <span class="bold wht">${valData.psnr.toFixed(4)}</span><span class="dkgray"> (best ${valData.bestPsnr.toFixed(4)} @ ${valData.bestPsnrIter})</span>  <span class="ltgray">ssim</span> <span class="bold wht">${valData.ssim.toFixed(6)}</span><span class="dkgray"> (best ${valData.bestSsim.toFixed(4)} @ ${valData.bestSsimIter})</span></div>`;
+  } else {
+    h += `<div class="line">  <span class="bold cyan">validation</span>  <span class="dkgray">last</span>   <span class="ltgray">psnr</span> <span class="wht">${valData.psnr.toFixed(4)}</span><span class="dkgray"> (best ${valData.bestPsnr.toFixed(4)} @ ${valData.bestPsnrIter})</span>  <span class="ltgray">ssim</span> <span class="wht">${valData.ssim.toFixed(6)}</span><span class="dkgray"> (best ${valData.bestSsim.toFixed(4)} @ ${valData.bestSsimIter})</span></div>`;
+  }
+
+  // Checkpoint
+  if (state === 'crashed') {
+    h += `<div class="line">  <span class="bold magenta">checkpoint</span>  <span class="dkgray">(process stopped)</span></div>`;
+  } else {
+    h += `<div class="line">  <span class="bold magenta">checkpoint</span>  <span class="wht">net_g_50000.pth</span>  <span class="dkgray">iter</span> <span class="bold wht">50000</span>  <span class="slate">2026-08-18 16:09:56</span>  <span class="dkgray">(every 5000)</span></div>`;
+  }
+
+  h += `<div class="line">${hr(w)}</div>`;
+
+  // Footer
+  if (state === 'crashed') {
+    h += `<div class="line">  <span class="dkgray">proc</span> <span class="red bold">DEAD</span>  <span class="dkgray">log</span> <span class="green">ok</span>  <span class="dkgray">mtime</span> 16:50:04</div>`;
+  } else {
+    h += `<div class="line">  <span class="dkgray">proc</span> <span class="green">alive</span>  <span class="dkgray">log</span> <span class="green">ok</span>  <span class="dkgray">mtime</span> 16:50:04</div>`;
+  }
+  h += `<div class="line">  <span class="dkgray">q quit  r refresh  (auto 1000ms)</span></div>`;
+
+  document.getElementById('term').innerHTML = h;
+}
+
+function setState(s) {
+  state = s;
+  // update buttons
+  document.querySelectorAll('.controls button').forEach(b => {
+    b.classList.remove('active');
+    const label = b.textContent.replace('● ', '').toLowerCase();
+    if (label === s) b.classList.add('active');
+  });
+  render();
+
+  if (s === 'crashed') {
+    gpuBusy = 0; memBusy = 0; powerW = 0;
+  } else if (s === 'saving') {
+    gpuBusy = 30; memBusy = 15; powerW = 45;
+  } else if (s === 'validating') {
+    gpuBusy = 85; memBusy = 60; powerW = 140;
+  } else {
+    gpuBusy = 100; memBusy = 41; powerW = 161;
+  }
+  render();
+}
+
+// Animate iter + GPU fluctuations
+function tick() {
+  if (state === 'training') {
+    curIter += Math.floor(Math.random() * 30 + 20);
+    gpuBusy = 90 + Math.floor(Math.random() * 11);
+    memBusy = 25 + Math.floor(Math.random() * 30);
+    powerW = 140 + Math.floor(Math.random() * 30);
+    gpuTemp = 60 + Math.floor(Math.random() * 5);
+    fanRpm = 680 + Math.floor(Math.random() * 80);
+
+    // jitter losses slightly
+    for (const key of Object.keys(losses)) {
+      losses[key] *= 1 + (Math.random() - 0.5) * 0.05;
+    }
+  } else if (state === 'validating') {
+    gpuBusy = 80 + Math.floor(Math.random() * 10);
+    memBusy = 55 + Math.floor(Math.random() * 15);
+    powerW = 130 + Math.floor(Math.random() * 20);
+  } else if (state === 'saving') {
+    gpuBusy = 20 + Math.floor(Math.random() * 20);
+    memBusy = 10 + Math.floor(Math.random() * 10);
+    powerW = 40 + Math.floor(Math.random() * 10);
+  }
+  render();
+}
+
+// Initial render
+setState('training');
+setInterval(tick, 1500);
+</script>
+
+</body>
+</html>
