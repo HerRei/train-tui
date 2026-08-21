@@ -168,9 +168,10 @@ static const profile_t profiles[] = {
     .save_mark  = "Saving models and training states.",
     .val_mark   = "Validation",
     .iter_has_commas = 1,
-    .num_loss_fields = 7,
+    .num_loss_fields = 8,
     .loss_fields = {
         {"l_g_pix:",    "l_g_pix"},
+        {"l_pix:",      "l_pix"},
         {"l_g_percep:", "l_g_percep"},
         {"l_g_gan:",    "l_g_gan"},
         {"l_d_real:",   "l_d_real"},
@@ -395,8 +396,25 @@ static int read_file_str(const char *path, char *out, size_t n) {
 
 /* ----------------------------- GPU: AMD sysfs --------------------- */
 
+static char g_amd_card_path[256] = {0};
+
+static void amd_discover_card(void) {
+    if (g_amd_card_path[0]) return;
+    for (int i = 0; i < 8; i++) {
+        char p[256];
+        snprintf(p, sizeof(p), "/sys/class/drm/card%d/device/gpu_busy_percent", i);
+        if (access(p, R_OK) == 0) {
+            snprintf(g_amd_card_path, sizeof(g_amd_card_path), "/sys/class/drm/card%d/device", i);
+            return;
+        }
+    }
+    snprintf(g_amd_card_path, sizeof(g_amd_card_path), "/sys/class/drm/card0/device");
+}
+
 static int amd_discover_hwmon(ctx_t *c) {
-    const char *base = "/sys/class/drm/card0/device/hwmon";
+    amd_discover_card();
+    char base[512];
+    snprintf(base, sizeof(base), "%s/hwmon", g_amd_card_path);
     for (int i = 0; i < 8; i++) {
         char p[1024];
         snprintf(p, sizeof(p), "%s/hwmon%d/name", base, i);
@@ -425,22 +443,28 @@ static int amd_discover_hwmon(ctx_t *c) {
 }
 
 static void read_gpu_amd(ctx_t *c) {
-    c->gpu_busy  = (int)read_int_file("/sys/class/drm/card0/device/gpu_busy_percent");
-    c->mem_busy  = (int)read_int_file("/sys/class/drm/card0/device/mem_busy_percent");
-    c->vram_used = read_int_file("/sys/class/drm/card0/device/mem_info_vram_used");
-    c->vram_total = read_int_file("/sys/class/drm/card0/device/mem_info_vram_total");
+    amd_discover_card();
+    char p[512];
+    snprintf(p, sizeof(p), "%s/gpu_busy_percent", g_amd_card_path);
+    c->gpu_busy  = (int)read_int_file(p);
+    snprintf(p, sizeof(p), "%s/mem_busy_percent", g_amd_card_path);
+    c->mem_busy  = (int)read_int_file(p);
+    snprintf(p, sizeof(p), "%s/mem_info_vram_used", g_amd_card_path);
+    c->vram_used = read_int_file(p);
+    snprintf(p, sizeof(p), "%s/mem_info_vram_total", g_amd_card_path);
+    c->vram_total = read_int_file(p);
     if (c->vram_used < 0) c->vram_used = 0;
     if (c->vram_total < 0) c->vram_total = 0;
     if (!c->have_hwmon) amd_discover_hwmon(c);
     if (c->have_hwmon) {
-        char p[1280];
-        snprintf(p, sizeof(p), "%s/temp1_input", c->hwmon_path);
-        long t = read_int_file(p);
+        char hp[1280];
+        snprintf(hp, sizeof(hp), "%s/temp1_input", c->hwmon_path);
+        long t = read_int_file(hp);
         c->gpu_temp = (t > 0) ? (int)(t / 1000) : -1;
-        snprintf(p, sizeof(p), "%s/fan1_input", c->hwmon_path);
-        c->fan_rpm = (int)read_int_file(p);
-        snprintf(p, sizeof(p), "%s/power1_average", c->hwmon_path);
-        long pw = read_int_file(p);
+        snprintf(hp, sizeof(hp), "%s/fan1_input", c->hwmon_path);
+        c->fan_rpm = (int)read_int_file(hp);
+        snprintf(hp, sizeof(hp), "%s/power1_average", c->hwmon_path);
+        long pw = read_int_file(hp);
         c->power_watts = (pw > 0) ? (int)(pw / 1000000) : -1;
     } else {
         c->gpu_temp = -1; c->fan_rpm = -1; c->power_watts = -1;
@@ -563,7 +587,7 @@ static int parse_log_line(ctx_t *c, char *line) {
     int did_something = 0;
 
     /* Check for save marker (may or may not have INFO: prefix) */
-    if (pr->save_mark && strstr(line, pr->save_mark)) {
+    if ((pr->save_mark && strstr(line, pr->save_mark)) || strstr(line, "Saving guarded checkpoint")) {
         c->save_at_iter = c->cur_iter;
         return 0;
     }
@@ -1565,17 +1589,24 @@ int main(int argc, char **argv) {
         snprintf(c.cfg_path, sizeof(c.cfg_path), "%s/options/train/%s",
                  c.project_root, c.cfg_name);
     }
-    char exp_dir[1600];
-    snprintf(exp_dir, sizeof(exp_dir), "%s/experiments/%s",
-             c.project_root, c.exp_name);
-    snprintf(c.ckpt_dir, sizeof(c.ckpt_dir), "%s/models", exp_dir);
-
     /* find log if not given */
     if (c.log_path[0] == 0) {
         if (find_log(&c, c.log_path, sizeof(c.log_path)) != 0) {
-            fprintf(stderr, "train-tui: no log file found in %s\n", exp_dir);
+            fprintf(stderr, "train-tui: no log file found for experiment '%s'\n", c.exp_name);
             return 1;
         }
+    }
+
+    /* resolve checkpoint directory adjacent to the log file or in standard location */
+    if (c.log_path[0]) {
+        char log_dir[2048] = {0};
+        snprintf(log_dir, sizeof(log_dir), "%s", c.log_path);
+        char *last_slash = strrchr(log_dir, '/');
+        if (last_slash) *last_slash = 0;
+        snprintf(c.ckpt_dir, sizeof(c.ckpt_dir), "%s/models", log_dir);
+    } else {
+        snprintf(c.ckpt_dir, sizeof(c.ckpt_dir), "%s/experiments/%s/models",
+                 c.project_root, c.exp_name);
     }
 
     /* parse config for total_iter */
