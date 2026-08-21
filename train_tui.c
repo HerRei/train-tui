@@ -1191,32 +1191,41 @@ static void render(ctx_t *c) {
 /* ----------------------------- find log --------------------------- */
 
 static int find_log(const ctx_t *c, char *out, size_t n) {
-    char dir[1600];
-    snprintf(dir, sizeof(dir), "%s/experiments/%s", c->project_root, c->exp_name);
-    DIR *d = opendir(dir);
-    if (!d) return -1;
-    struct dirent *e;
-    time_t best = 0;
-    char best_name[256] = {0};
     char prefix[512];
     snprintf(prefix, sizeof(prefix), "train_%s_", c->exp_name);
     size_t plen = strlen(prefix);
-    while ((e = readdir(d)) != NULL) {
-        if (strncmp(e->d_name, prefix, plen) != 0) continue;
-        size_t ln = strlen(e->d_name);
-        if (ln < 5 || strcmp(e->d_name + ln - 4, ".log") != 0) continue;
-        char full[2048];
-        snprintf(full, sizeof(full), "%s/%s", dir, e->d_name);
-        struct stat st;
-        if (stat(full, &st) != 0) continue;
-        if (st.st_mtime > best) {
-            best = st.st_mtime;
-            snprintf(best_name, sizeof(best_name), "%s", e->d_name);
+
+    char d0[1600], d1[1600], d2[1600], d3[1600];
+    snprintf(d0, sizeof(d0), "%s/experiments/%s", c->project_root, c->exp_name);
+    snprintf(d1, sizeof(d1), "%s/experiments_hat_l/%s", c->project_root, c->exp_name);
+    snprintf(d2, sizeof(d2), "/home/hermes/hat-face-training/experiments_hat_l/%s", c->exp_name);
+    snprintf(d3, sizeof(d3), "%s/../experiments_hat_l/%s", c->project_root, c->exp_name);
+    const char *search_dirs[4] = { d0, d1, d2, d3 };
+
+    time_t best = 0;
+    char best_full[2048] = {0};
+
+    for (int idx = 0; idx < 4; idx++) {
+        DIR *d = opendir(search_dirs[idx]);
+        if (!d) continue;
+        struct dirent *e;
+        while ((e = readdir(d)) != NULL) {
+            if (strncmp(e->d_name, prefix, plen) != 0) continue;
+            size_t ln = strlen(e->d_name);
+            if (ln < 5 || strcmp(e->d_name + ln - 4, ".log") != 0) continue;
+            char full[2048];
+            snprintf(full, sizeof(full), "%s/%s", search_dirs[idx], e->d_name);
+            struct stat st;
+            if (stat(full, &st) != 0) continue;
+            if (st.st_mtime > best) {
+                best = st.st_mtime;
+                snprintf(best_full, sizeof(best_full), "%s", full);
+            }
         }
+        closedir(d);
     }
-    closedir(d);
-    if (!best_name[0]) return -1;
-    snprintf(out, n, "%s/%s", dir, best_name);
+    if (!best_full[0]) return -1;
+    snprintf(out, n, "%s", best_full);
     return 0;
 }
 
@@ -1395,9 +1404,10 @@ static pid_t autodetect_train(char *project_root, size_t pr_n,
             if (cmdline[i] == '\0') cmdline[i] = ' ';
         }
 
-        /* look for "train.py" or "trainer" in cmdline, and "python" */
+        /* look for training python processes (train.py, train_*.py, trainer, safe_launch, etc.) */
         if (!strstr(cmdline, "python")) continue;
-        if (!strstr(cmdline, "train.py") && !strstr(cmdline, "trainer"))
+        if (!strstr(cmdline, "train.py") && !strstr(cmdline, "trainer") &&
+            !strstr(cmdline, "train_") && !strstr(cmdline, "safe_launch"))
             continue;
 
         /* read cwd */
@@ -1408,24 +1418,19 @@ static pid_t autodetect_train(char *project_root, size_t pr_n,
         if (cl <= 0) continue;
         cwd[cl] = 0;
 
-        /* extract config: look for "-opt" followed by a .yml path */
-        char cfg[256] = {0};
+        /* extract config: look for "-opt" or "--config" followed by a .yml path */
+        char cfg[512] = {0};
         char *opt = strstr(cmdline, "-opt ");
+        if (!opt) opt = strstr(cmdline, "--config ");
         if (opt) {
-            /* skip "-opt " to get the next arg */
-            char *p = opt + 5;  /* "-opt " is 5 chars */
+            char *p = opt + (opt[1] == '-' ? 9 : 5);
             while (*p == ' ') p++;
             if (*p) {
-                /* p now points to the config path like "options/train/foo.yml " */
-                /* find end (space) */
-                char *end = strchr(p, ' ');
+                char path_buf[512] = {0};
+                snprintf(path_buf, sizeof(path_buf), "%s", p);
+                char *end = strchr(path_buf, ' ');
                 if (end) *end = 0;
-                /* take basename */
-                const char *base = p;
-                for (const char *s = p; *s; s++) {
-                    if (*s == '/') base = s + 1;
-                }
-                snprintf(cfg, sizeof(cfg), "%s", base);
+                snprintf(cfg, sizeof(cfg), "%s", path_buf);
             }
         }
 
@@ -1518,8 +1523,19 @@ int main(int argc, char **argv) {
             c.profile = profiles[c.profile_id];
         }
         if (c.cfg_name[0]) {
-            snprintf(c.cfg_path, sizeof(c.cfg_path), "%s/options/train/%s",
-                     c.project_root, c.cfg_name);
+            if (c.cfg_name[0] == '/' && access(c.cfg_name, R_OK) == 0) {
+                snprintf(c.cfg_path, sizeof(c.cfg_path), "%s", c.cfg_name);
+            } else {
+                snprintf(c.cfg_path, sizeof(c.cfg_path), "%s/%s", c.project_root, c.cfg_name);
+                if (access(c.cfg_path, R_OK) != 0) {
+                    snprintf(c.cfg_path, sizeof(c.cfg_path), "%s/options/train/%s",
+                             c.project_root, c.cfg_name);
+                }
+                if (access(c.cfg_path, R_OK) != 0) {
+                    snprintf(c.cfg_path, sizeof(c.cfg_path), "%s/.generated/options/%s",
+                             c.project_root, c.cfg_name);
+                }
+            }
             parse_config(&c);
         }
     }
