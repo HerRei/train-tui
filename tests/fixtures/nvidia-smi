@@ -1,12 +1,15 @@
 #!/bin/sh
-# Stand-in for nvidia-smi: two cards, one used by the watched run.
+# Stand-in for nvidia-smi: two cards, one used by the watched run
+# (TT_NV_ONE=1: only the first).
 case "$*" in
 *--query-compute-apps*)
     echo "${TT_RUN_PID:-1}, GPU-aaaa"
+    [ -n "${TT_NV_ONE:-}" ] && exit 0
     echo "${TT_OTHER_PID:-1}, GPU-bbbb"
     ;;
 *--query-gpu*)
     echo "0, GPU-aaaa, NVIDIA GeForce RTX 4090, 97, 20480, 24564, 71, N/A, 412.50, 450.00, 63"
+    [ -n "${TT_NV_ONE:-}" ] && exit 0
     echo "1, GPU-bbbb, NVIDIA RTX A6000, 3, 1024, 49140, 44, [N/A], 75.10, 300.00, 30"
     ;;
 esac

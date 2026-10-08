@@ -457,6 +457,8 @@ typedef struct {
 
 static FILE *g_out;            /* the frame being built (open_memstream) */
 static int g_live = 1;         /* full-screen refresh loop (not --once) */
+static int g_refresh_ms = REFRESH_MS;
+static volatile sig_atomic_t g_resized;
 static int g_strip_all;        /* --once into a pipe: no escape codes */
 static int g_no_color;         /* NO_COLOR: keep cursor codes, drop colors */
 static char g_sysroot[PATH_MAX];   /* prefix for /sys paths (tests) */
@@ -1495,9 +1497,16 @@ static void on_sigint(int sig) {
     _exit(0);
 }
 
+static void on_winch(int sig) {
+    (void)sig;
+    g_resized = 1;
+}
+
 static int win_cols(void) {
     struct winsize w;
     if (ioctl(1, TIOCGWINSZ, &w) == 0 && w.ws_col > 0) return w.ws_col;
+    const char *env = getenv("COLUMNS");     /* --once into a pipe or file */
+    if (env && atoi(env) > 0) return atoi(env);
     return 80;
 }
 
@@ -1879,7 +1888,7 @@ static void render(ctx_t *c) {
     ps("\n");
 
     if (g_live)
-        pf(CLRLN "  " FG_DKGRAY "q quit  r refresh  (auto %dms)" RST "\n" ED, REFRESH_MS);
+        pf(CLRLN "  " FG_DKGRAY "q quit  r refresh  (auto %dms)" RST "\n" ED, g_refresh_ms);
 }
 
 static void draw(ctx_t *c) {
@@ -2075,6 +2084,7 @@ static void usage(const char *prog) {
         "  -t <total>      total iterations (overrides config and log)\n"
         "  -k <dir>        checkpoint directory (default: next to the log)\n"
         "  -g <backend>    GPUs: auto (every card found), amd, nvidia, none\n"
+        "  -i <seconds>    refresh interval (default 1; raise it on a slow link)\n"
         "  --once          print one frame and exit (no escape codes when piped)\n"
         "  -V, --version   print the version\n"
         "  -h, --help      this help\n"
@@ -2090,6 +2100,7 @@ static void usage(const char *prog) {
         "\n"
         "environment:\n"
         "  NO_COLOR        no colors\n"
+        "  COLUMNS         width for --once when the output is not a terminal\n"
         "\n",
         TRAIN_TUI_VERSION, prog, prog);
     exit(2);
@@ -2207,6 +2218,10 @@ int main(int argc, char **argv) {
             custom_profile_path = argv[++argi];
         } else if (strcmp(a, "-t") == 0 && argi + 1 < argc) {
             c.total_iter_override = atol(argv[++argi]);
+        } else if (strcmp(a, "-i") == 0 && argi + 1 < argc) {
+            double sec = atof(argv[++argi]);
+            if (sec < 0.2) { fprintf(stderr, "train-tui: -i needs at least 0.2 seconds\n"); return 2; }
+            g_refresh_ms = (int)(sec * 1000 + 0.5);
         } else if (strcmp(a, "-k") == 0 && argi + 1 < argc) {
             ckpt_dir_opt = argv[++argi];
         } else if (strcmp(a, "-g") == 0 && argi + 1 < argc) {
@@ -2300,6 +2315,14 @@ int main(int argc, char **argv) {
     gpu_discover(&c);
     host_discover(&c);
 
+    /* "ssh host train-tui ..." without -t: one plain frame, not an endless
+     * stream of screen updates into a pipe. */
+    if (!once && !isatty(1)) {
+        fprintf(stderr, "train-tui: not a terminal, printing one frame "
+                        "(use ssh -t for the live view)\n");
+        once = 1;
+    }
+
     if (once) {
         g_live = 0;
         g_strip_all = !isatty(1);
@@ -2320,11 +2343,13 @@ int main(int argc, char **argv) {
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
     sigaction(SIGHUP, &sa, NULL);
+    sa.sa_handler = on_winch;      /* no SA_RESTART: select() wakes up */
+    sigaction(SIGWINCH, &sa, NULL);
 
     term_enter();
     atexit(term_exit);
 
-    int quit = 0;
+    int quit = 0, keys_open = 1;
     while (!quit) {
         c.now = time(NULL);
         check_proc(&c);
@@ -2333,18 +2358,29 @@ int main(int argc, char **argv) {
         tail_log(&c);
         scan_checkpoints(&c);
         update_state(&c);
+        if (g_resized) {               /* a resized window: start clean */
+            g_resized = 0;
+            fputs(CLEAR, stdout);
+        }
         draw(&c);
 
         struct timeval tv;
-        tv.tv_sec = REFRESH_MS / 1000;
-        tv.tv_usec = (REFRESH_MS % 1000) * 1000;
+        tv.tv_sec = g_refresh_ms / 1000;
+        tv.tv_usec = (g_refresh_ms % 1000) * 1000;
         fd_set fds;
         FD_ZERO(&fds);
-        FD_SET(0, &fds);
-        if (select(1, &fds, NULL, NULL, &tv) > 0 && FD_ISSET(0, &fds)) {
-            char ch = 0;
-            if (read(0, &ch, 1) == 1 && (ch == 'q' || ch == 'Q' || ch == 3 || ch == 27))
-                quit = 1;
+        if (keys_open) FD_SET(0, &fds);
+        if (select(keys_open ? 1 : 0, &fds, NULL, NULL, &tv) > 0 && FD_ISSET(0, &fds)) {
+            char keys[32];
+            ssize_t n = read(0, keys, sizeof(keys));
+            if (n <= 0) {
+                keys_open = 0;         /* stdin closed: keep drawing, stop reading */
+            } else if (keys[0] == 27) {
+                quit = n == 1;         /* a lone Esc; arrow keys are Esc sequences */
+            } else {
+                for (ssize_t i = 0; i < n; i++)
+                    if (keys[i] == 'q' || keys[i] == 'Q' || keys[i] == 3) quit = 1;
+            }
         }
     }
 

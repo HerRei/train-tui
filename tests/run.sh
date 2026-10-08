@@ -144,6 +144,20 @@ mk "$hw/hwmon2/name" nvme; mk "$hw/hwmon2/temp1_input" 66850; mk "$hw/hwmon2/tem
 mk "$hw/hwmon3/name" nvme; mk "$hw/hwmon3/temp1_input" 56850; mk "$hw/hwmon3/temp1_crit" 87850
 mk "$hw/hwmon4/name" amdgpu; mk "$hw/hwmon4/temp1_input" 99000
 
+# --- a second fake sysfs with one card: an older kernel (one unlabelled
+# temperature) and no fan reading, as on many passively cooled cards ---
+S1=$T/root1
+one=$S1/sys/devices/pci0000:00/0000:03:00.0
+mk "$one/gpu_busy_percent" 87
+mk "$one/mem_info_vram_used" 6442450944
+mk "$one/mem_info_vram_total" 17163091968
+mk "$one/uevent" "PCI_ID=1002:66AF"
+mk "$one/hwmon/hwmon1/name" amdgpu
+mk "$one/hwmon/hwmon1/temp1_input" 58000
+mk "$one/hwmon/hwmon1/power1_average" 212000000
+mkdir -p "$S1/sys/class/drm/card0"
+ln -s ../../../devices/pci0000:00/0000:03:00.0 "$S1/sys/class/drm/card0/device"
+
 empty=$T/empty
 mkdir -p "$empty"
 
@@ -238,6 +252,18 @@ expect nvidia "$T/nvidia.out" "gpu0 RTX 4090" "core 71°C" "413/450 W" "fan 63%"
 reject nvidia-mem "$T/nvidia.out" "hotspot" "mem 0°C"
 export TRAIN_TUI_NVIDIA_SMI=$NO_SMI
 
+# 5b. a single card, AMD and NVIDIA
+TRAIN_TUI_SYSFS="$S1" "$BIN" --once -p jsonl "$J" pianorun - "$RUN" "$J/log.jsonl" > "$T/single.out" 2>&1
+expect single "$T/single.out" "[TRAINING]" "gpu0 Radeon VII" "load" " 87%" "6.0G/16.0G" \
+    "edge 58°C" "212 W"
+reject single-extra "$T/single.out" "gpu1" "GPUs" "hotspot" "rpm" "cpu " "this run"
+export TRAIN_TUI_NVIDIA_SMI="$FIX/nvidia-smi" TT_NV_ONE=1
+run nvidia_single -g nvidia -p jsonl "$J" pianorun - "$RUN" "$J/log.jsonl"
+expect nvidia_single "$T/nvidia_single.out" "gpu0 RTX 4090" "core 71°C" "this run"
+reject nvidia_single-extra "$T/nvidia_single.out" "gpu1" "GPUs"
+export TRAIN_TUI_NVIDIA_SMI=$NO_SMI
+unset TT_NV_ONE
+
 # 6. no GPUs, no sensors
 TRAIN_TUI_SYSFS="$empty" "$BIN" --once -g none -p jsonl "$J" pianorun - "$RUN" "$J/log.jsonl" > "$T/none.out" 2>&1
 expect none "$T/none.out" "(no GPU stats)"
@@ -262,9 +288,29 @@ for f in "$T"/*.out; do
 done
 pass=$((pass + 1))
 
+# 8b. COLUMNS sets the width when the output is not a terminal
+COLUMNS=96 TRAIN_TUI_SYSFS="$S" "$BIN" --once -p jsonl "$J" pianorun - "$RUN" "$J/log.jsonl" > "$T/wide.txt"
+w=$(LC_ALL=C awk '{ n = gsub(/[^\200-\277]/, "&"); if (n > m) m = n } END { print m + 0 }' "$T/wide.txt")
+if [ "$w" = 96 ]; then pass=$((pass + 1)); else echo "FAIL COLUMNS=96 gave $w columns"; fails=$((fails + 1)); fi
+
+# 8c. the live view without a terminal (ssh without -t) prints one frame and exits
+TRAIN_TUI_SYSFS="$S" "$BIN" -p jsonl "$J" pianorun - "$RUN" "$J/log.jsonl" > "$T/notty.txt" 2> "$T/notty.err" &
+live=$!
+i=0
+while kill -0 "$live" 2> /dev/null && [ "$i" -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+if kill -0 "$live" 2> /dev/null; then
+    kill "$live"
+    echo "FAIL the live view kept running without a terminal"
+    fails=$((fails + 1))
+else
+    expect notty "$T/notty.txt" "[TRAINING]" "gpu1 Radeon VII"
+    expect notty-hint "$T/notty.err" "use ssh -t"
+    reject notty-escapes "$T/notty.txt" "$(printf '\033')"
+fi
+
 # 9. command line
 "$BIN" --version | grep -q "^train-tui [0-9]" && pass=$((pass + 1)) || { echo "FAIL --version"; fails=$((fails + 1)); }
-"$BIN" -h 2> "$T/help.out"; expect help "$T/help.out" "--once" "jsonl" "-k <dir>"
+"$BIN" -h 2> "$T/help.out"; expect help "$T/help.out" "--once" "jsonl" "-k <dir>" "-i <seconds>" "COLUMNS"
 if "$BIN" --bogus > /dev/null 2>&1; then echo "FAIL unknown option accepted"; fails=$((fails + 1)); else pass=$((pass + 1)); fi
 printf 'loss_fields = "loss":\nbase = jsonl\n' > "$T/late-base.profile"
 if "$BIN" --once -c "$T/late-base.profile" "$J" x - "$RUN" "$J/log.jsonl" > /dev/null 2>&1; then
