@@ -54,7 +54,7 @@
 #define PATH_MAX 4096
 #endif
 
-#define TRAIN_TUI_VERSION "1.1.0"
+#define TRAIN_TUI_VERSION "1.1.1"
 
 /* ----------------------------- tuning ------------------------------ */
 

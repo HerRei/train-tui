@@ -1,30 +1,42 @@
 # Changelog
 
+## 1.1.1 (2026-10-08)
+
+Mostly about watching a run from another machine, over SSH or Tailscale.
+
+- Without a terminal (`ssh host train-tui …` without `-t`) it now prints one
+  plain frame and a hint instead of filling the pipe with screen updates.
+- Resizing the window redraws it cleanly.
+- Arrow keys no longer quit. Esc on its own, `q` and Ctrl-C still do.
+- `-i` sets the refresh interval for slow links, and `COLUMNS` sets the
+  width of `--once` output.
+- More tests: one AMD card on an older kernel, one NVIDIA card, and the
+  no-terminal path.
+
 ## 1.1.0 (2026-10-08)
 
-- Every GPU in the machine, not just the first: AMD (all amdgpu cards) and
-  NVIDIA (every line of `nvidia-smi`), also mixed. Cards get their marketing
-  name from `pci.ids`.
-- Temperatures: edge, hotspot and memory per card, colored against the
-  driver's critical limits; CPU package and NVMe temperature in the status
-  line. Power is shown against the card's cap.
-- Which job uses each card ("this run", "+N" other jobs, "free"), from
-  `/sys/class/kfd` or `nvidia-smi --query-compute-apps`. DDP ranks in the
-  watched process group count as this run.
-- New `jsonl` profile for JSON-lines logs; profile files can build on a
-  built-in profile with `base = ...`; new keys `total_mark`, `stamp_mark`,
-  `val_metric_track_best = min|max`.
-- ETA and speed measured from the step rate when the log has no ETA.
-- Hugging Face: validation values and the total from the log now show.
-- The log is read incrementally (last 8 MiB at start, then new lines only),
-  so best values have history and IDLE detection works.
-- `--once` prints a single frame (plain text when piped); `-k` sets the
-  checkpoint directory; `-V`; `NO_COLOR`; a process owned by another user is
-  no longer reported dead; the screen is drawn in one write (no flicker).
-- `FINISHED` state when the process exits after the last step.
-- Lines stay within 80 columns; lists wrap.
-- Tests (`make test`) and CI with gcc and clang; `make install`.
-- Removed paths that only existed on the author's machine.
+The big one: every GPU in the box, and temperatures you can read at a glance.
+
+- All cards are shown, not just the first: every amdgpu card, every card
+  `nvidia-smi` lists, or a mix of both. Cards are named from `pci.ids`.
+- Each card shows edge, hotspot and memory temperature, colored against the
+  limits its driver reports, plus power against its cap. The status line
+  adds the CPU package and the hottest NVMe drive.
+- Each card says who is using it: this run (the watched process and its
+  process group, so DDP ranks count), other jobs, or nobody.
+- A `jsonl` profile for logs written one JSON object per line. Profile files
+  can start from a built-in profile with `base = …`, and gained
+  `total_mark`, `stamp_mark` and `min`/`max` best values.
+- An ETA measured from the step rate when the log has none.
+- Hugging Face logs now show their validation values and total steps.
+- The log is read incrementally, so best values have history and `IDLE`
+  finally works. `FINISHED` appears when the process exits after the last
+  step.
+- `--once`, `-k`, `-V` and `NO_COLOR`. A process owned by another user is no
+  longer reported dead, and each frame is drawn in one write.
+- Everything fits in 80 columns; long lists wrap.
+- Tests and CI (gcc and clang), and `make install`.
+- Paths that only existed on my machine are gone.
 
 ## 1.0.0 (2026-08-20)
 
