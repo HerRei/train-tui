@@ -155,14 +155,14 @@ awk 'BEGIN {
 
 B=$T/basicsr
 cp -R "$FIX/basicsr" "$B"
-touch -t 202610080800 "$B/experiments/demo/models/net_g_45000.pth"
+touch -t 202001010000 "$B/experiments/demo/models/net_g_45000.pth"
 touch "$B/experiments/demo/models/net_g_50000.pth"
 blog=$(ls "$B"/experiments/demo/train_demo_*.log)
 
 H=$T/hf
 mkdir -p "$H/checkpoint-100" "$H/checkpoint-200"
 cp "$FIX/hf.log" "$H/train.log"
-touch -t 202610080800 "$H/checkpoint-100"
+touch -t 202001010000 "$H/checkpoint-100"
 
 run() {   # run NAME ARGS...  -> $T/NAME.out
     name=$1
