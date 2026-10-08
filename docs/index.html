@@ -214,7 +214,7 @@
 </div>
 
 <script>
-// --- Simulation state (a BasicSR run on two AMD cards) ---
+// --- Simulation state (a BasicSR run on two RTX 5090s) ---
 let state = 'training';
 let curIter = 50800;
 const totalIter = 250000;
@@ -223,16 +223,16 @@ let lr = 1.0e-4;
 let tIter = 1.91;
 let tData = 0.002;
 let eta = '4 days, 19:24:47';
-let cpuTemp = 61;
-let nvmeTemp = 66;
+let cpuTemp = 64;
+let nvmeTemp = 51;
 
+// nvidia-smi gives a GeForce card's core temperature only, fan speed in
+// percent, and 32607 MiB (31.8G) for a 5090; its power limit is 575 W.
 const gpus = [
-  { name: 'RX 9050 / 9060 XT', busy: 100, vramUsed: 10.5, vramTotal: 15.9,
-    temps: [['edge', 66, 100], ['hotspot', 81, 110], ['mem', 80, 105]],
-    power: 141, cap: 165, fan: 1259, tag: 'this run' },
-  { name: 'Radeon VII', busy: 100, vramUsed: 10.2, vramTotal: 16.0,
-    temps: [['edge', 84, 100], ['hotspot', 103, 110], ['mem', 86, 94]],
-    power: 150, cap: 150, fan: 881, tag: 'this run' },
+  { name: 'RTX 5090', busy: 99, vramUsed: 28.4, vramTotal: 31.8,
+    core: 71, power: 548, cap: 575, fan: 61, tag: 'this run' },
+  { name: 'RTX 5090', busy: 100, vramUsed: 28.4, vramTotal: 31.8,
+    core: 79, power: 575, cap: 575, fan: 78, tag: 'this run' },
 ];
 
 const losses = {
@@ -328,7 +328,7 @@ function render() {
   h += `<div class="line">${hr(W)}</div>`;
 
   // status line + host temperatures
-  h += `<div class="line">  <span class="${st.col}">${st.glyph}</span>  <span class="dkgray">[</span><span class="${st.col}">${st.label}</span><span class="dkgray">]</span>   ${temp('cpu', cpuTemp, 105).html}   ${temp('nvme', nvmeTemp, 85).html}<span class="dkgray">   ${gpus.length} GPUs</span></div>`;
+  h += `<div class="line">  <span class="${st.col}">${st.glyph}</span>  <span class="dkgray">[</span><span class="${st.col}">${st.label}</span><span class="dkgray">]</span>   ${temp('cpu', cpuTemp, 100).html}   ${temp('nvme', nvmeTemp, 85).html}<span class="dkgray">   ${gpus.length} GPUs</span></div>`;
 
   // one two-line block per GPU
   const bars = W - 61, bl = Math.floor(bars / 2), bv = bars - bl;
@@ -339,18 +339,15 @@ function render() {
     const name = g.name.length > 18 ? g.name.slice(0, 17) + '…' : g.name + pad(18 - g.name.length);
     h += `<div class="line">  ${mark} <span class="ltgray">gpu${String(i).padEnd(2)}</span><span class="bwht">${name}</span>  <span class="dkgray">load </span>${makeMinBar(busy / 100, bl, 'load')} <span class="wht">${String(busy).padStart(3)}%</span>  <span class="dkgray">vram </span>${makeMinBar(g.vramUsed / g.vramTotal, bv, 'fill')} <span class="wht">${used}</span><span class="dkgray">/</span><span class="slate">${total}</span></div>`;
 
-    let line = pad(9);
-    const fields = [11, 15, 10];
-    g.temps.forEach(([label, t, crit], k) => {
-      const x = temp(label, alive ? t : Math.min(t, 45), crit);
-      line += x.html + pad(fields[k] - x.width);
-    });
-    const power = alive ? g.power : 9;
+    // no limit from the driver: amber from 77 °C, red from 87
+    const core = temp('core', alive ? g.core : 38, 92);
+    let line = pad(9) + core.html + pad(11 - core.width);
+    const power = alive ? g.power : 21;
     const pcol = power >= g.cap ? 'amber' : 'wht';
     const ptext = `${power}/${g.cap} W`;
     line += `<span class="${pcol}">${power}</span><span class="dkgray">/${g.cap} W</span>` + pad(11 - ptext.length);
-    const ftext = `${g.fan} rpm`;
-    line += `<span class="wht">${g.fan}</span><span class="dkgray"> rpm</span>` + pad(10 - ftext.length);
+    const fan = alive ? g.fan : 30;
+    line += `<span class="dkgray">fan </span><span class="wht">${fan}%</span>` + pad(10 - `fan ${fan}%`.length);
     line += alive ? `<span class="cyan">${g.tag}</span>` : '<span class="dkgray">free</span>';
     h += `<div class="line">${line}</div>`;
   });
@@ -408,10 +405,11 @@ function tick() {
   const jitter = (base, spread) => base + Math.floor(Math.random() * spread);
   if (state === 'training') {
     curIter += jitter(20, 30);
-    gpus[0].busy = jitter(94, 7); gpus[1].busy = jitter(95, 6);
-    gpus[0].power = jitter(132, 30); gpus[1].power = jitter(140, 14);
-    gpus[0].temps[1][1] = jitter(78, 6); gpus[1].temps[1][1] = jitter(100, 6);
-    cpuTemp = jitter(58, 8);
+    gpus[0].busy = jitter(96, 5); gpus[1].busy = jitter(97, 4);
+    gpus[0].power = jitter(530, 36); gpus[1].power = Math.min(575, jitter(562, 16));
+    gpus[0].core = jitter(70, 3); gpus[1].core = jitter(78, 3);
+    gpus[0].fan = jitter(60, 3); gpus[1].fan = jitter(77, 3);
+    cpuTemp = jitter(61, 7);
     for (const key of Object.keys(losses)) losses[key] *= 1 + (Math.random() - 0.5) * 0.05;
   } else if (state === 'validating') {
     gpus.forEach(g => { g.busy = jitter(80, 10); });
