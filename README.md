@@ -46,6 +46,8 @@ make
 
 Press `q` to quit. `-a` finds a running `python … train*.py` by itself. `make install` installs it as `/usr/local/bin/train-tui`.
 
+Prebuilt Linux binaries (x86-64 and arm64) are attached to each [release](https://github.com/HerRei/train-tui/releases).
+
 ### Arguments
 
 ```

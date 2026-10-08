@@ -1,0 +1,31 @@
+name: release
+
+# Attaches prebuilt binaries to a published release. Ubuntu 22.04 keeps the
+# glibc requirement low (2.35), so they run on most current distributions.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  binary:
+    strategy:
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: make test
+      - name: Build
+        run: |
+          make clean
+          make
+          strip train_tui
+          mv train_tui "train_tui-linux-$(uname -m)"
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" train_tui-linux-* --clobber
