@@ -8,11 +8,13 @@ BIN=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 HERE=$(cd "$(dirname "$0")" && pwd)
 FIX=$HERE/fixtures
 T=$(mktemp -d)
+RUN=
+SPAWNED=
 # KEEP=1 keeps the outputs for a look afterwards
 if [ -n "${KEEP:-}" ]; then
-    trap 'kill "$RUN" 2>/dev/null; echo "outputs kept in $T"' EXIT INT TERM
+    trap 'kill "$RUN" $SPAWNED 2>/dev/null; echo "outputs kept in $T"' EXIT INT TERM
 else
-    trap 'kill "$RUN" 2>/dev/null; rm -rf "$T"' EXIT INT TERM
+    trap 'kill "$RUN" $SPAWNED 2>/dev/null; rm -rf "$T"' EXIT INT TERM
 fi
 
 export TRAIN_TUI_PCI_IDS="$FIX/pci.ids"
@@ -25,6 +27,16 @@ unset NO_COLOR
 sleep 300 &
 RUN=$!
 export TT_RUN_PID=$RUN
+# A process of some other job: its own session where setsid exists (PID 1
+# can be in our group inside a container), else PID 1.
+OTHER=1
+SPAWNED=
+if command -v setsid > /dev/null 2>&1; then
+    setsid sleep 300 &
+    OTHER=$!
+    SPAWNED=$OTHER
+fi
+export TT_OTHER_PID=$OTHER
 
 fails=0
 pass=0
@@ -118,11 +130,11 @@ drm_render_minor 129"
 mk "$kfd/topology/nodes/2/gpu_id" 17126
 mk "$kfd/topology/nodes/2/properties" "cpu_cores_count 0
 drm_render_minor 130"
-# the run: one process per card (same process group); init also uses card0
+# the run: one process per card (same process group); another job uses card0
 mk "$kfd/proc/$RUN/vram_15209" 11183026176
 mk "$kfd/proc/$RUN/vram_17126" 0
 mk "$kfd/proc/$$/vram_17126" 10929975296
-mk "$kfd/proc/1/vram_15209" 524288000
+mk "$kfd/proc/$OTHER/vram_15209" 524288000
 hw=$S/sys/class/hwmon
 mk "$hw/hwmon10/name" coretemp
 mk "$hw/hwmon10/temp1_label" "Package id 0"; mk "$hw/hwmon10/temp1_input" 63000

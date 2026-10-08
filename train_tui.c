@@ -1946,7 +1946,7 @@ static int split_list(char *v, char items[][MAX_LOSS_MARK], int max) {
     int n = 0;
     char *save = NULL;
     for (char *tok = strtok_r(v, ",", &save); tok && n < max; tok = strtok_r(NULL, ",", &save))
-        snprintf(items[n++], MAX_LOSS_MARK, "%s", trim(tok));
+        copy_str(items[n++], MAX_LOSS_MARK, trim(tok));
     return n;
 }
 
@@ -2016,22 +2016,22 @@ static int load_custom_profile(ctx_t *c, const char *path) {
             int n = split_list(v, items, MAX_LOSS_FIELDS);
             memset(pr->loss_fields, 0, sizeof(pr->loss_fields));
             for (int i = 0; i < n; i++)
-                snprintf(pr->loss_fields[i].mark, MAX_LOSS_MARK, "%s", items[i]);
+                copy_str(pr->loss_fields[i].mark, MAX_LOSS_MARK, items[i]);
             pr->num_loss_fields = n;
         } else if (strcmp(key, "loss_labels") == 0) {
             int n = split_list(v, items, MAX_LOSS_FIELDS);
             for (int i = 0; i < n; i++)
-                snprintf(pr->loss_fields[i].label, MAX_LOSS_LABEL, "%s", items[i]);
+                copy_str(pr->loss_fields[i].label, MAX_LOSS_LABEL, items[i]);
         } else if (strcmp(key, "val_metrics") == 0) {
             int n = split_list(v, items, MAX_LOSS_FIELDS);
             memset(pr->val_metrics, 0, sizeof(pr->val_metrics));
             for (int i = 0; i < n; i++)
-                snprintf(pr->val_metrics[i].mark, MAX_LOSS_MARK, "%s", items[i]);
+                copy_str(pr->val_metrics[i].mark, MAX_LOSS_MARK, items[i]);
             pr->num_val_metrics = n;
         } else if (strcmp(key, "val_metric_labels") == 0) {
             int n = split_list(v, items, MAX_LOSS_FIELDS);
             for (int i = 0; i < n; i++)
-                snprintf(pr->val_metrics[i].label, MAX_LOSS_LABEL, "%s", items[i]);
+                copy_str(pr->val_metrics[i].label, MAX_LOSS_LABEL, items[i]);
         } else if (strcmp(key, "val_metric_track_best") == 0) {
             int n = split_list(v, items, MAX_LOSS_FIELDS);
             for (int i = 0; i < n; i++) {

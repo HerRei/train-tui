@@ -3,7 +3,7 @@
 case "$*" in
 *--query-compute-apps*)
     echo "${TT_RUN_PID:-1}, GPU-aaaa"
-    echo "1, GPU-bbbb"
+    echo "${TT_OTHER_PID:-1}, GPU-bbbb"
     ;;
 *--query-gpu*)
     echo "0, GPU-aaaa, NVIDIA GeForce RTX 4090, 97, 20480, 24564, 71, N/A, 412.50, 450.00, 63"
