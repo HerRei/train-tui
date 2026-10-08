@@ -1,4 +1,4 @@
 train_tui
 *.o
 *.swp
-.core
+core

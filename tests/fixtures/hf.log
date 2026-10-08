@@ -1,0 +1,9 @@
+***** Running training *****
+  Num examples = 10,000
+  Num Epochs = 1
+  Total optimization steps = 1,250
+{'loss': 2.31, 'grad_norm': 1.5, 'learning_rate': 4.9e-05, 'epoch': 0.4, 'step': 100}
+{'eval_loss': 2.05, 'eval_accuracy': 0.58, 'eval_runtime': 3.2, 'epoch': 0.4, 'step': 100}
+{'loss': 2.1, 'grad_norm': 1.2, 'learning_rate': 4.5e-05, 'epoch': 0.8, 'step': 200}
+{'eval_loss': 1.98, 'eval_accuracy': 0.61, 'eval_runtime': 3.1, 'epoch': 0.8, 'step': 200}
+Saving model checkpoint to out/checkpoint-200

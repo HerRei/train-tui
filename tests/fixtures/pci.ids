@@ -1,0 +1,7 @@
+# Subset of pci.ids (https://pci-ids.ucw.cz) for the tests. Indent = tabs.
+1002  Advanced Micro Devices, Inc. [AMD/ATI]
+	66af  Vega 20 [Radeon VII]
+	7590  Navi 44 [Radeon RX 9050 / 9060 XT]
+		1da2 e491  Radeon RX 9060 XT (subsystem line, must be skipped)
+10de  NVIDIA Corporation
+	2684  AD102 [GeForce RTX 4090]

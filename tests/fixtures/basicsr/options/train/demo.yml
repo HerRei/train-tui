@@ -1,0 +1,12 @@
+# BasicSR-style options, only the keys train-tui reads
+name: demo
+model_type: HATModel
+
+train:
+  total_iter: 250000
+
+val:
+  val_freq: !!float 5e3
+
+logger:
+  save_checkpoint_freq: !!float 5e3
