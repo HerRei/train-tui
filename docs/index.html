@@ -63,9 +63,10 @@
     border-radius: 8px;
     overflow: hidden;
     width: 100%;
-    max-width: 760px;
+    max-width: 780px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.5);
-    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', 'Consolas', monospace;
+    /* fonts whose block and box glyphs keep the monospace grid */
+    font-family: 'Menlo', 'DejaVu Sans Mono', 'Cascadia Mono', 'Consolas', monospace;
     font-size: 13px;
     line-height: 1.55;
   }
@@ -104,7 +105,6 @@
 
   .hr {
     color: var(--border);
-    letter-spacing: -1px;
   }
 
   .dim { color: var(--dim); }
@@ -198,22 +198,23 @@
 </div>
 
 <div class="controls">
-  <button onclick="setState('training')">● Training</button>
-  <button onclick="setState('validating')">● Validating</button>
-  <button onclick="setState('saving')">● Saving</button>
-  <button onclick="setState('crashed')">● Crashed</button>
+  <button data-state="training" onclick="setState('training')">● Training</button>
+  <button data-state="validating" onclick="setState('validating')">● Validating</button>
+  <button data-state="saving" onclick="setState('saving')">● Saving</button>
+  <button data-state="crashed" onclick="setState('crashed')">● Crashed</button>
 </div>
 
 <div class="footer">
-  This is a live simulation of the TUI rendering loop. The real tool reads
-  log files, sysfs/nvidia-smi GPU stats, and checkpoint directories.
+  This is a simulation of the TUI. The real tool reads the training log,
+  every GPU (amdgpu sysfs or nvidia-smi), CPU and NVMe sensors, and the
+  checkpoint directory.
   <br><br>
   <a href="https://github.com/HerRei/train-tui">Source code</a> ·
   <a href="https://huggingface.co/HerRei/train-tui">Hugging Face</a>
 </div>
 
 <script>
-// --- Simulation state ---
+// --- Simulation state (a BasicSR run on two AMD cards) ---
 let state = 'training';
 let curIter = 50800;
 const totalIter = 250000;
@@ -222,13 +223,17 @@ let lr = 1.0e-4;
 let tIter = 1.91;
 let tData = 0.002;
 let eta = '4 days, 19:24:47';
-let gpuBusy = 100;
-let memBusy = 41;
-let vramUsed = 7.3; // GiB
-let vramTotal = 15.9;
-let gpuTemp = 62;
-let powerW = 161;
-let fanRpm = 720;
+let cpuTemp = 61;
+let nvmeTemp = 66;
+
+const gpus = [
+  { name: 'RX 9050 / 9060 XT', busy: 100, vramUsed: 10.5, vramTotal: 15.9,
+    temps: [['edge', 66, 100], ['hotspot', 81, 110], ['mem', 80, 105]],
+    power: 141, cap: 165, fan: 1259, tag: 'this run' },
+  { name: 'Radeon VII', busy: 100, vramUsed: 10.2, vramTotal: 16.0,
+    temps: [['edge', 84, 100], ['hotspot', 103, 110], ['mem', 86, 94]],
+    power: 150, cap: 150, fan: 881, tag: 'this run' },
+];
 
 const losses = {
   l_g_pix: 0.040098,
@@ -241,22 +246,20 @@ const losses = {
 };
 
 const valData = {
-  psnr: 31.0703,
-  bestPsnr: 31.0892,
-  bestPsnrIter: 40000,
-  ssim: 0.851900,
-  bestSsim: 0.8520,
-  bestSsimIter: 30000
+  iter: 50000,
+  psnr: 31.0703, bestPsnr: 31.0892, bestPsnrIter: 40000,
+  ssim: 0.8519, bestSsim: 0.852, bestSsimIter: 30000
 };
 
-// --- Rendering helpers ---
+// --- Rendering helpers (same rules as the C code) ---
 function fmtMetric(v) {
   if (v === 0) return '0';
   const av = Math.abs(v);
-  if (av >= 100) return v.toFixed(2);
-  if (av >= 1) return v.toFixed(4);
-  if (av >= 0.001) return v.toFixed(6);
-  return v.toExponential(2);
+  if (av >= 10000) return v.toFixed(0);
+  if (av < 0.001) return v.toExponential(2);
+  let s = v.toFixed(av >= 100 ? 2 : av >= 1 ? 4 : 6);
+  while (s.length > 3 && s.endsWith('0') && s[s.length - 2] !== '.') s = s.slice(0, -1);
+  return s;
 }
 
 function makeBar(pct, width) {
@@ -270,120 +273,121 @@ function makeBar(pct, width) {
   else if (pct >= 0.2) { fillCol = 'bar-fill-yellow'; leadCol = 'yellow'; }
   else { fillCol = 'bar-fill-orange'; leadCol = 'yellow'; }
 
-  let html = `<span class="${fillCol}">`;
-  for (let i = 0; i < full; i++) html += '█';
-  html += '</span>';
-
+  let html = `<span class="${fillCol}">${'█'.repeat(full)}</span>`;
   if (full < width && frac > 0) {
     const partials = ['▏','▎','▍','▌','▋','▊','▉'];
     const idx = Math.min(6, Math.max(0, Math.round(frac * 8) - 1));
     html += `<span class="${leadCol}">${partials[idx]}</span>`;
   }
-
-  html += '<span class="blk-empty">';
-  for (let i = full + (frac > 0 ? 1 : 0); i < width; i++) html += '░';
-  html += '</span>';
-
+  html += `<span class="blk-empty">${'░'.repeat(Math.max(0, width - full - (frac > 0 ? 1 : 0)))}</span>`;
   return html;
 }
 
-function makeMinBar(pct, width) {
-  const cells = Math.floor(pct * width);
-  let col = 'green';
-  if (pct >= 0.9) col = 'red';
-  else if (pct >= 0.75) col = 'yellow';
-
-  let html = `<span class="${col}">`;
-  for (let i = 0; i < cells; i++) html += '▓';
-  html += '</span><span class="blk-empty">';
-  for (let i = cells; i < width; i++) html += '░';
-  html += '</span>';
-  return html;
+// load: full is good (green); fill (VRAM): full is a warning
+function makeMinBar(pct, width, kind) {
+  const cells = Math.min(width, Math.round(pct * width));
+  let col;
+  if (kind === 'load') col = pct >= 0.7 ? 'green' : pct >= 0.3 ? 'yellow' : 'orange';
+  else col = pct >= 0.9 ? 'red' : pct >= 0.75 ? 'yellow' : 'green';
+  return `<span class="${col}">${'▓'.repeat(cells)}</span><span class="blk-empty">${'░'.repeat(width - cells)}</span>`;
 }
+
+// white, amber within 15 °C of the critical limit, bold red within 5 °C
+function temp(label, t, crit) {
+  const col = t >= crit - 5 ? 'red bold' : t >= crit - 15 ? 'amber' : 'bwht';
+  return { html: `<span class="dkgray">${label} </span><span class="${col}">${t}°C</span>`,
+           width: label.length + 1 + String(t).length + 2 };
+}
+
+function pad(n) { return ' '.repeat(Math.max(0, n)); }
 
 function hr(width) {
   return `<span class="hr">${'─'.repeat(width)}</span>`;
 }
 
 function render() {
-  const w = 78;
-  const barW = 48;
-  const mbW = 40;
+  const W = 80;
   const pct = curIter / totalIter;
+  const itText = `${curIter}/${totalIter}`;
+  const barW = W - 7 - itText.length - 2 - 8;
+  const alive = state !== 'crashed';
 
   const stateMap = {
-    training:   { glyph: '●', col: 'green',  label: 'TRAINING',   tagCol: 'green' },
-    validating: { glyph: '●', col: 'yellow', label: 'VALIDATING', tagCol: 'yellow' },
-    saving:     { glyph: '●', col: 'blue',   label: 'SAVING',     tagCol: 'blue' },
-    crashed:    { glyph: '✖', col: 'red',    label: 'CRASHED',    tagCol: 'red' },
+    training:   { glyph: '●', col: 'green',  label: 'TRAINING' },
+    validating: { glyph: '●', col: 'yellow', label: 'VALIDATING' },
+    saving:     { glyph: '●', col: 'blue',   label: 'SAVING' },
+    crashed:    { glyph: '✖', col: 'red',    label: 'CRASHED' },
   };
   const st = stateMap[state];
-  const glyphClass = state === 'crashed' ? 'red' : st.col;
 
   let h = '';
-  h += `<div class="line"> <span class="cyan bold">██</span> <span class="bold bwht">train-tui</span> <span class="slate"> HAT-S_SRx4_face_finetune_v2</span> <span class="dkgray"> pid 9397  profile: basicsr</span></div>`;
+  h += `<div class="line"> <span class="cyan bold">██</span> <span class="bold bwht">train-tui</span><span class="slate">  HAT-S_SRx4_face_finetune_v2</span><span class="dkgray">  pid 9397  profile basicsr</span></div>`;
+  h += `<div class="line">  <span class="ltgray">iter</span> <span class="bold bwht">${curIter}</span><span class="dkgray">/</span><span class="wht">${totalIter}</span>  ${makeBar(pct, barW)}  <span class="bold bwht">${(pct*100).toFixed(1).padStart(5)}%</span></div>`;
+  h += `<div class="line">  <span class="ltgray">epoch</span> <span class="wht">${epoch}</span>   <span class="ltgray">lr</span> <span class="steel">${lr.toExponential(3)}</span>   <span class="ltgray">t/it</span> <span class="wht">${tIter.toFixed(2)}s</span><span class="dkgray"> (data ${tData.toFixed(3)}s)</span></div>`;
+  h += `<div class="line">  <span class="ltgray">eta</span> <span class="bold amber">${alive ? eta : ''}</span></div>`;
+  h += `<div class="line">${hr(W)}</div>`;
 
-  h += `<div class="line">  <span class="ltgray">iter</span> <span class="bold bwht">${String(curIter).padStart(5)}</span><span class="dkgray">/</span><span class="wht">${String(totalIter).padStart(-5)}</span>  ${makeBar(pct, barW)}  <span class="bold bwht">${(pct*100).toFixed(1)}%</span></div>`;
+  // status line + host temperatures
+  h += `<div class="line">  <span class="${st.col}">${st.glyph}</span>  <span class="dkgray">[</span><span class="${st.col}">${st.label}</span><span class="dkgray">]</span>   ${temp('cpu', cpuTemp, 105).html}   ${temp('nvme', nvmeTemp, 85).html}<span class="dkgray">   ${gpus.length} GPUs</span></div>`;
 
-  h += `<div class="line">  <span class="ltgray">epoch</span> <span class="wht">${String(epoch).padStart(3)}</span>   <span class="ltgray">lr</span> <span class="steel">${lr.toExponential(3)}</span>   <span class="ltgray">t/it</span> <span class="wht">${tIter.toFixed(2)}s</span> <span class="dkgray">(data ${tData.toFixed(3)}s)</span></div>`;
+  // one two-line block per GPU
+  const bars = W - 61, bl = Math.floor(bars / 2), bv = bars - bl;
+  gpus.forEach((g, i) => {
+    const busy = alive ? g.busy : 0;
+    const used = `${g.vramUsed.toFixed(1)}G`, total = `${g.vramTotal.toFixed(1)}G`;
+    const mark = alive && g.tag !== 'free' ? '<span class="cyan">●</span>' : '<span class="dkgray">○</span>';
+    const name = g.name.length > 18 ? g.name.slice(0, 17) + '…' : g.name + pad(18 - g.name.length);
+    h += `<div class="line">  ${mark} <span class="ltgray">gpu${String(i).padEnd(2)}</span><span class="bwht">${name}</span>  <span class="dkgray">load </span>${makeMinBar(busy / 100, bl, 'load')} <span class="wht">${String(busy).padStart(3)}%</span>  <span class="dkgray">vram </span>${makeMinBar(g.vramUsed / g.vramTotal, bv, 'fill')} <span class="wht">${used}</span><span class="dkgray">/</span><span class="slate">${total}</span></div>`;
 
-  h += `<div class="line">  <span class="ltgray">eta</span> <span class="bold amber">${eta}</span></div>`;
+    let line = pad(9);
+    const fields = [11, 15, 10];
+    g.temps.forEach(([label, t, crit], k) => {
+      const x = temp(label, alive ? t : Math.min(t, 45), crit);
+      line += x.html + pad(fields[k] - x.width);
+    });
+    const power = alive ? g.power : 9;
+    const pcol = power >= g.cap ? 'amber' : 'wht';
+    const ptext = `${power}/${g.cap} W`;
+    line += `<span class="${pcol}">${power}</span><span class="dkgray">/${g.cap} W</span>` + pad(11 - ptext.length);
+    const ftext = `${g.fan} rpm`;
+    line += `<span class="wht">${g.fan}</span><span class="dkgray"> rpm</span>` + pad(10 - ftext.length);
+    line += alive ? `<span class="cyan">${g.tag}</span>` : '<span class="dkgray">free</span>';
+    h += `<div class="line">${line}</div>`;
+  });
 
-  h += `<div class="line">${hr(w)}</div>`;
+  h += `<div class="line">${hr(W)}</div>`;
 
-  // GPU status
-  h += `<div class="line">  <span class="${glyphClass}">${st.glyph}</span>  <span class="dkgray">[</span><span class="${st.tagCol}">${st.label}</span><span class="dkgray">]</span>  `;
-  if (state === 'crashed') {
-    h += `<span class="dkgray">(process died)</span></div>`;
-  } else {
-    h += `<span class="ltgray">GPU</span> <span class="wht">${String(gpuBusy).padStart(3)}%</span>   <span class="ltgray">MEM</span> <span class="wht">${String(memBusy).padStart(3)}%</span>   <span class="ltgray">VRAM</span> <span class="wht">${vramUsed.toFixed(1)}G</span><span class="dkgray">/</span><span class="slate">${vramTotal.toFixed(1)}G</span>   <span class="ltgray">${gpuTemp}</span><span class="dkgray">C</span>   <span class="ltgray">${powerW}</span><span class="dkgray">W</span>   <span class="ltgray">${fanRpm}</span><span class="dkgray">rpm</span></div>`;
-  }
-
-  if (state !== 'crashed') {
-    h += `<div class="line">  <span class="dkgray">gpu </span>${makeMinBar(gpuBusy/100, mbW)}  <span class="wht">${String(gpuBusy).padStart(3)}%</span></div>`;
-    h += `<div class="line">  <span class="dkgray">mem </span>${makeMinBar(memBusy/100, mbW)}  <span class="wht">${String(memBusy).padStart(3)}%</span></div>`;
-    h += `<div class="line">  <span class="dkgray">vram</span>${makeMinBar(vramUsed/vramTotal, mbW)}  <span class="wht">${Math.round(vramUsed/vramTotal*100)}%</span></div>`;
-  }
-
-  h += `<div class="line">${hr(w)}</div>`;
-
-  // Metrics
-  const lossEntries = Object.entries(losses);
+  // metrics, wrapped at the screen width
+  let col = 11;
   h += `<div class="line">  <span class="bold magenta">metrics</span>  `;
-  let count = 0;
-  for (const [label, val] of lossEntries) {
-    if (count > 0 && count % 3 === 0) {
-      h += `</div><div class="line">  <span class="dkgray">        </span>`;
+  for (const [label, val] of Object.entries(losses)) {
+    const text = `${label} ${fmtMetric(val)}  `;
+    if (col > 11 && col + text.length > W) {
+      h += `</div><div class="line">${pad(11)}`;
+      col = 11;
     }
     h += `<span class="ltgray">${label}</span> <span class="wht">${fmtMetric(val)}</span>  `;
-    count++;
+    col += text.length;
   }
   h += `</div>`;
 
-  h += `<div class="line">${hr(w)}</div>`;
+  h += `<div class="line">${hr(W)}</div>`;
 
-  // Validation
-  if (state === 'validating') {
-    h += `<div class="line">  <span class="bold cyan">validation</span>  <span class="bold yellow blink">RUNNING</span>  <span class="ltgray">psnr</span> <span class="bold wht">${valData.psnr.toFixed(4)}</span><span class="dkgray"> (best ${valData.bestPsnr.toFixed(4)} @ ${valData.bestPsnrIter})</span>  <span class="ltgray">ssim</span> <span class="bold wht">${valData.ssim.toFixed(6)}</span><span class="dkgray"> (best ${valData.bestSsim.toFixed(4)} @ ${valData.bestSsimIter})</span></div>`;
-  } else {
-    h += `<div class="line">  <span class="bold cyan">validation</span>  <span class="dkgray">last</span>   <span class="ltgray">psnr</span> <span class="wht">${valData.psnr.toFixed(4)}</span><span class="dkgray"> (best ${valData.bestPsnr.toFixed(4)} @ ${valData.bestPsnrIter})</span>  <span class="ltgray">ssim</span> <span class="wht">${valData.ssim.toFixed(6)}</span><span class="dkgray"> (best ${valData.bestSsim.toFixed(4)} @ ${valData.bestSsimIter})</span></div>`;
-  }
+  // validation
+  const head = state === 'validating'
+    ? `<span class="bold yellow blink">RUNNING</span>  `
+    : `<span class="dkgray">last @ ${valData.iter}</span>  `;
+  h += `<div class="line">  <span class="bold cyan">validation</span>  ${head}<span class="ltgray">psnr</span> <span class="bold wht">${fmtMetric(valData.psnr)}</span><span class="dkgray"> (best ${fmtMetric(valData.bestPsnr)} @ ${valData.bestPsnrIter})</span></div>`;
+  h += `<div class="line">${pad(14)}<span class="ltgray">ssim</span> <span class="bold wht">${fmtMetric(valData.ssim)}</span><span class="dkgray"> (best ${fmtMetric(valData.bestSsim)} @ ${valData.bestSsimIter})</span>  <span class="dkgray">(every 5000)</span></div>`;
 
-  // Checkpoint
-  if (state === 'crashed') {
-    h += `<div class="line">  <span class="bold magenta">checkpoint</span>  <span class="dkgray">(process stopped)</span></div>`;
-  } else {
-    h += `<div class="line">  <span class="bold magenta">checkpoint</span>  <span class="wht">net_g_50000.pth</span>  <span class="dkgray">iter</span> <span class="bold wht">50000</span>  <span class="slate">2026-08-18 16:09:56</span>  <span class="dkgray">(every 5000)</span></div>`;
-  }
+  // checkpoint
+  h += `<div class="line">  <span class="bold magenta">checkpoint</span>  <span class="wht">net_g_50000.pth</span>  <span class="dkgray">iter</span> <span class="bold wht">50000</span>  <span class="slate">16:09</span><span class="dkgray"> (41m 08s ago)  every 5000</span></div>`;
 
-  h += `<div class="line">${hr(w)}</div>`;
+  h += `<div class="line">${hr(W)}</div>`;
 
-  // Footer
-  if (state === 'crashed') {
-    h += `<div class="line">  <span class="dkgray">proc</span> <span class="red bold">DEAD</span>  <span class="dkgray">log</span> <span class="green">ok</span>  <span class="dkgray">mtime</span> 16:50:04</div>`;
-  } else {
-    h += `<div class="line">  <span class="dkgray">proc</span> <span class="green">alive</span>  <span class="dkgray">log</span> <span class="green">ok</span>  <span class="dkgray">mtime</span> 16:50:04</div>`;
-  }
+  // footer
+  const proc = alive ? '<span class="green">alive</span>' : '<span class="red bold">DEAD</span>';
+  h += `<div class="line">  <span class="dkgray">proc</span> ${proc}  <span class="dkgray">log</span> <span class="green">ok</span>  <span class="dkgray">last write</span> 16:50:04<span class="dkgray"> (${alive ? '12s' : '9m 40s'} ago)</span></div>`;
   h += `<div class="line">  <span class="dkgray">q quit  r refresh  (auto 1000ms)</span></div>`;
 
   document.getElementById('term').innerHTML = h;
@@ -391,53 +395,32 @@ function render() {
 
 function setState(s) {
   state = s;
-  // update buttons
   document.querySelectorAll('.controls button').forEach(b => {
-    b.classList.remove('active');
-    const label = b.textContent.replace('● ', '').toLowerCase();
-    if (label === s) b.classList.add('active');
+    b.classList.toggle('active', b.dataset.state === s);
   });
-  render();
-
-  if (s === 'crashed') {
-    gpuBusy = 0; memBusy = 0; powerW = 0;
-  } else if (s === 'saving') {
-    gpuBusy = 30; memBusy = 15; powerW = 45;
-  } else if (s === 'validating') {
-    gpuBusy = 85; memBusy = 60; powerW = 140;
-  } else {
-    gpuBusy = 100; memBusy = 41; powerW = 161;
-  }
+  const load = { training: 100, validating: 88, saving: 30, crashed: 0 }[s];
+  gpus.forEach(g => { g.busy = load; });
   render();
 }
 
-// Animate iter + GPU fluctuations
+// Animate iter, loads, temperatures
 function tick() {
+  const jitter = (base, spread) => base + Math.floor(Math.random() * spread);
   if (state === 'training') {
-    curIter += Math.floor(Math.random() * 30 + 20);
-    gpuBusy = 90 + Math.floor(Math.random() * 11);
-    memBusy = 25 + Math.floor(Math.random() * 30);
-    powerW = 140 + Math.floor(Math.random() * 30);
-    gpuTemp = 60 + Math.floor(Math.random() * 5);
-    fanRpm = 680 + Math.floor(Math.random() * 80);
-
-    // jitter losses slightly
-    for (const key of Object.keys(losses)) {
-      losses[key] *= 1 + (Math.random() - 0.5) * 0.05;
-    }
+    curIter += jitter(20, 30);
+    gpus[0].busy = jitter(94, 7); gpus[1].busy = jitter(95, 6);
+    gpus[0].power = jitter(132, 30); gpus[1].power = jitter(140, 14);
+    gpus[0].temps[1][1] = jitter(78, 6); gpus[1].temps[1][1] = jitter(100, 6);
+    cpuTemp = jitter(58, 8);
+    for (const key of Object.keys(losses)) losses[key] *= 1 + (Math.random() - 0.5) * 0.05;
   } else if (state === 'validating') {
-    gpuBusy = 80 + Math.floor(Math.random() * 10);
-    memBusy = 55 + Math.floor(Math.random() * 15);
-    powerW = 130 + Math.floor(Math.random() * 20);
+    gpus.forEach(g => { g.busy = jitter(80, 10); });
   } else if (state === 'saving') {
-    gpuBusy = 20 + Math.floor(Math.random() * 20);
-    memBusy = 10 + Math.floor(Math.random() * 10);
-    powerW = 40 + Math.floor(Math.random() * 10);
+    gpus.forEach(g => { g.busy = jitter(20, 20); });
   }
   render();
 }
 
-// Initial render
 setState('training');
 setInterval(tick, 1500);
 </script>
